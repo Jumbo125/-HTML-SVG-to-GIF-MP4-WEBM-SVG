@@ -80,7 +80,7 @@ Format | Beschreibung               | Hinweise
 - FFmpeg (Rendering & Video-Encoding)
 - Reguläre Ausdrücke (CSS/SVG Parsing)
 - Dateiverwaltung: pathlib, shutil, subprocess
-
+ 
 ============================================================
 📝 Lizenz (MIT)
 
