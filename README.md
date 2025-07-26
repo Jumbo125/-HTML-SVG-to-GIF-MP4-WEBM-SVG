@@ -1,7 +1,4 @@
-# -HTML-SVG-to-GIF-MP4-WEBM-SVG
-🎞 HTML to GIF/MP4/WebM/SVG Converter (GUI, Playwright, FFmpeg)
-
-🎞 HTML to GIF/MP4/WebM/SVG Converter (GUI, Playwright, FFmpeg)
+# 🎞 HTML to GIF/MP4/WebM/SVG Converter (GUI, Playwright, FFmpeg)
 
 Ein benutzerfreundliches Python-Tool zur Umwandlung von HTML/SVG-Animationen in GIF, MP4, WebM oder statische SVG-Dateien – ideal für Entwickler, Designer oder Content-Creators.
 
