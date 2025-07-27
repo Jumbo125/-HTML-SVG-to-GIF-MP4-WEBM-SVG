@@ -5,13 +5,13 @@ import os
 import time
 import subprocess
 import re
+import sys
 import shutil
 import textwrap
 from tkinter import filedialog, messagebox
 from playwright.sync_api import sync_playwright
 
 
-ffmpeg_path = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
 browser_path = ""
 
 # Vordefinierte Browser-Pfade
@@ -25,48 +25,67 @@ KNOWN_BROWSERS = {
     "Mozilla Firefox": r"C:\Program Files\Mozilla Firefox\firefox.exe",
 }
 
-def ask_for_browser_path_gui():
-        selected_path = {"path": None}
+def ask_for_browser_and_ffmpeg_paths_gui():
+    selected_paths = {"browser": None, "ffmpeg": None}
 
-        def select_from_list():
-            value = dropdown_var.get()
-            path = KNOWN_BROWSERS.get(value)
-            if path and os.path.exists(path):
-                selected_path["path"] = path
-                window.destroy()
-            else:
-                messagebox.showwarning(
-                    "Datei nicht gefunden",
-                    f"Die Datei wurde nicht gefunden:\n\n{path}\n\nBitte wählen Sie einen anderen Browser oder durchsuchen Sie manuell."
-                )
+    def select_from_list():
+        value = dropdown_var.get()
+        path = KNOWN_BROWSERS.get(value)
+        if path and os.path.exists(path):
+            selected_paths["browser"] = path
+            ask_for_ffmpeg()
+        else:
+            messagebox.showwarning(
+                "Datei nicht gefunden",
+                f"Die Datei wurde nicht gefunden:\n\n{path}\n\nBitte wählen Sie einen anderen Browser oder durchsuchen Sie manuell."
+            )
 
-        def browse_file():
-            path = filedialog.askopenfilename(title="Browser auswählen", filetypes=[("Browser", "*.exe")])
-            if path:
-                selected_path["path"] = path
-                window.destroy()
+    def browse_browser():
+        path = filedialog.askopenfilename(title="Browser auswählen", filetypes=[("Browser", "*.exe")])
+        if path:
+            selected_paths["browser"] = path
+            ask_for_ffmpeg()
 
-        window = tk.Tk()
-        window.title("Browser auswählen")
-        window.geometry("500x200")
-        window.resizable(False, False)
+    def ask_for_ffmpeg():
+        messagebox.showinfo(
+        "FFmpeg auswählen",
+            "📦 Im nächsten Fenster bitte die ffmpeg.exe auswählen."
+        )
+        ffmpeg_path = filedialog.askopenfilename(
+            title="FFmpeg auswählen",
+            filetypes=[("ffmpeg.exe", "ffmpeg.exe")]
+        )
+        if ffmpeg_path and os.path.exists(ffmpeg_path):
+            selected_paths["ffmpeg"] = ffmpeg_path
+            window.destroy()
+        else:
+            messagebox.showwarning(
+                "FFmpeg fehlt",
+                "⚠️ Sie müssen ffmpeg.exe auswählen, um fortzufahren."
+            )
 
-        tk.Label(window, text="Bitte wählen Sie einen Browser oder durchsuchen Sie manuell:", font=("Segoe UI", 10)).pack(pady=10)
+    window = tk.Tk()
+    window.title("Browser + FFmpeg auswählen")
+    window.geometry("500x220")
+    window.resizable(False, False)
 
-        dropdown_var = tk.StringVar(window)
-        dropdown_var.set(list(KNOWN_BROWSERS.keys())[0])
-        tk.OptionMenu(window, dropdown_var, *KNOWN_BROWSERS.keys()).pack(pady=5)
+    tk.Label(window, text="Bitte wählen Sie einen Browser:", font=("Segoe UI", 10)).pack(pady=10)
 
-        tk.Button(window, text="Aus Liste verwenden", command=select_from_list).pack(pady=5)
-        tk.Button(window, text="Manuell durchsuchen...", command=browse_file).pack(pady=5)
+    dropdown_var = tk.StringVar(window)
+    dropdown_var.set(list(KNOWN_BROWSERS.keys())[0])
+    tk.OptionMenu(window, dropdown_var, *KNOWN_BROWSERS.keys()).pack(pady=5)
 
-        window.mainloop()
+    tk.Button(window, text="Aus Liste verwenden", command=select_from_list).pack(pady=5)
+    tk.Button(window, text="Manuell durchsuchen...", command=browse_browser).pack(pady=5)
 
+    window.mainloop()
 
-        if not selected_path["path"]:
-            raise RuntimeError("Kein Browser ausgewählt.")
+    if not selected_paths["browser"]:
+        raise RuntimeError("❌ Kein Browser ausgewählt.")
+    if not selected_paths["ffmpeg"]:
+        raise RuntimeError("❌ Kein ffmpeg.exe ausgewählt.")
 
-        return selected_path["path"]
+    return selected_paths["browser"], selected_paths["ffmpeg"]
 
 
 
@@ -258,6 +277,8 @@ class GifExporterApp:
         self.playwright = None
         self.context = None
 
+
+    
     def toggle_svg_input(self):
         mode = self.svg_mode.get()
         if mode == "manual":
@@ -268,7 +289,15 @@ class GifExporterApp:
             self.svg_input_frame.pack_forget()
             self.css_input_frame.pack_forget()
             self.svg_file_button.pack(pady=4)
-
+   
+    def detect_browser_type(self, path):
+        path_lower = path.lower()
+        if "firefox" in path_lower:
+            return "firefox"
+        elif any(keyword in path_lower for keyword in ["chrome", "brave", "edge", "opera"]):
+            return "chromium"
+        return None
+    
     def show_license_info(self):
         license_window = tk.Toplevel(self.master)
         license_window.title("Lizenzinformationen")
@@ -328,10 +357,25 @@ class GifExporterApp:
 
         try:
             self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.launch(headless=False, args=["--start-maximized"])
+
+            browser_type = self.detect_browser_type(self.browser_path)
+
+            if browser_type == "chromium":
+                self.browser = self.playwright.chromium.launch(
+                    headless=False,
+                    args=["--start-maximized"],
+                    executable_path=self.browser_path  # installierter Browser
+                )
+            elif browser_type == "firefox":
+                print("⚠️ Firefox kann nicht mit benutzerdefiniertem Pfad verwendet werden. Verwende eingebauten Playwright-Firefox.")
+                self.browser = self.playwright.firefox.launch(headless=False)
+            else:
+                raise RuntimeError(f"Nicht unterstützter oder nicht erkannter Browser: {self.browser_path}")
+
             self.context = self.browser.new_context()
             page = self.context.new_page()
             page.goto(url)
+
         except Exception as e:
             print(f"❌ Fehler beim Öffnen von Playwright: {e}")
 
@@ -602,7 +646,7 @@ class GifExporterApp:
         try:
             with sync_playwright() as p:
                 #browser = p.chromium.launch(headless=False)
-                browser = p.chromium.launch(executable_path=browser_path, headless=False)
+                browser = p.chromium.launch(executable_path=self.browser_path, headless=False)
                 context = browser.new_context()
                 page = context.new_page()
                 page.goto("file://" + os.path.abspath(self.html_path))
@@ -643,6 +687,7 @@ class GifExporterApp:
             messagebox.showerror(
                 "Fehler", "📁 Bitte HTML-Datei und Zielverzeichnis wählen.")
             return
+        
 
         # Hinweisfenster anzeigen
         wait_popup = tk.Toplevel(self.master)
@@ -768,7 +813,7 @@ class GifExporterApp:
         try: 
             with sync_playwright() as p:
                 #browser = p.chromium.launch(headless=False)
-                browser = p.chromium.launch(executable_path=browser_path, headless=False)
+                browser = p.chromium.launch(executable_path=self.browser_path, headless=False)
                 context = browser.new_context()
                 page = context.new_page()
                 page.goto("file://" + os.path.abspath(self.html_path))
@@ -820,7 +865,11 @@ class GifExporterApp:
 
                 target_bitrate = int(min_bitrate + (quality / 100)
                                     * (max_bitrate - min_bitrate))
-
+                print(f"🛠️ Verwende ffmpeg-Pfad: {ffmpeg_path}")
+                if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+                    messagebox.showerror("Fehler", f"❌ ffmpeg.exe nicht gefunden unter:\n{ffmpeg_path}")
+                    return
+                
                 # PNGs → WebM mit Alpha (nur sinnvoll wenn SVG wirklich transparent ist)
                 vpx_crf = int((100 - quality) / 1.5)
                 subprocess.call([
@@ -907,10 +956,10 @@ class GifExporterApp:
 
 if __name__ == "__main__":
     try:
-        selected_browser_path = ask_for_browser_path_gui()  # ← Muss global sein
-
+        browser_path, ffmpeg_path = ask_for_browser_and_ffmpeg_paths_gui()  # ← Muss global sein
+         
         root = tk.Tk()
-        app = GifExporterApp(root, browser_path=selected_browser_path)
+        app = GifExporterApp(root, browser_path=browser_path)
         root.mainloop()
 
     except RuntimeError as e:
