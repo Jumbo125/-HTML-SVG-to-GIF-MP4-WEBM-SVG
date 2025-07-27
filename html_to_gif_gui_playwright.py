@@ -8,6 +8,7 @@ import re
 import sys
 import shutil
 import textwrap
+import webbrowser
 from tkinter import filedialog, messagebox
 from playwright.sync_api import sync_playwright
 
@@ -232,10 +233,10 @@ class GifExporterApp:
         ttk.Separator(self.svg_css_frame, orient="horizontal").pack(fill="x", padx=0, pady=(10, 6))
         link1 = tk.Label(self.svg_css_frame, text="🌐 https://svgartista.net/ (für SVG-Code manuell erhalten)", fg="blue", cursor="hand2")
         link1.pack(anchor="w", pady=(0, 2))
-        link1.bind("<Button-1>", lambda e: self.open_with_playwright("https://svgartista.net/"))
+        link1.bind("<Button-1>", lambda e: webbrowser.open("https://svgartista.net/"))
         link2 = tk.Label(self.svg_css_frame, text="🌐 https://maxwellito.github.io/vivus-instant/ (für SVG-Downlaod)", fg="blue", cursor="hand2")
         link2.pack(anchor="w", pady=(0, 6))
-        link2.bind("<Button-1>", lambda e: self.open_with_playwright("https://maxwellito.github.io/vivus-instant/"))
+        link2.bind("<Button-1>", lambda e: webbrowser.open("https://maxwellito.github.io/vivus-instant/"))
 
         # Button: HTML erzeugen
         self.generate_html_button = tk.Button(self.svg_css_frame, text="🛠 HTML erzeugen", command=self.generate_html_from_svg_css)
@@ -372,7 +373,7 @@ class GifExporterApp:
             else:
                 raise RuntimeError(f"Nicht unterstützter oder nicht erkannter Browser: {self.browser_path}")
 
-            self.context = self.browser.new_context()
+            self.context = self.browser.new_context(accept_downloads=True)
             page = self.context.new_page()
             page.goto(url)
 
