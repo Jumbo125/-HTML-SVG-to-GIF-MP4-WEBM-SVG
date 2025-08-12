@@ -240,7 +240,11 @@ class GifExporterApp:
 
         # Button: HTML erzeugen
         self.generate_html_button = tk.Button(self.svg_css_frame, text="🛠 HTML erzeugen", command=self.generate_html_from_svg_css)
-        self.generate_html_button.pack(fill="x", pady=(10, 30))
+        self.generate_html_button.pack(fill="x", pady=(10, 10))
+
+         # Button: SVG aus CODE erzeugen
+        self.generate_svg_button = tk.Button(self.svg_css_frame, text="🛠 SVG aus CODE erzeugen", command=self.generate_svg_from_code)
+        self.generate_svg_button.pack(fill="x", pady=(10, 30))
 
          # Lizenzbutton unten
         tk.Button(self.svg_css_frame, text="Lizenzinformationen", command=self.show_license_info).pack(side="bottom", pady=10)
@@ -426,151 +430,213 @@ class GifExporterApp:
         except Exception as e:
             messagebox.showerror("Fehler", f"SVG-Datei konnte nicht geladen werden:\n{e}")
         
+
+    def generate_svg_from_code(self):
+        """
+        Nimmt CSS (self.css_input) und SVG (self.svg_input),
+        fügt <style>…</style> direkt nach dem <svg …> Opentag ein
+        und gibt das kombinierte SVG als String zurück.
+        """
+        messagebox.showinfo("Code einfügen", "Nur Animation code und kein Transistions Code verweden!")
+        
+        css_content = self.css_input.get("1.0", "end").strip()
+        svg_content = self.svg_input.get("1.0", "end").strip()
+
+        # Finde das erste <svg ...> Opentag (robust, case-insensitive)
+        m = re.search(r"<svg\b[^>]*>", svg_content, flags=re.IGNORECASE)
+        if not m:
+            raise ValueError("Kein <svg> Opentag im SVG-Inhalt gefunden.")
+
+        open_tag = m.group(0)
+        before = svg_content[:m.start()]   # evtl. XML-Header etc.
+        after  = svg_content[m.end():]     # Restlicher SVG-Inhalt (inkl. schließendes </svg>)
+
+        # Style-Block vorbereiten (nur einfügen, wenn CSS vorhanden)
+        style_block = ""
+        if css_content:
+            style_block = "\n  <style>\n" + css_content + "\n  </style>\n"
+
+        combined_svg = f"{before}{open_tag}{style_block}{after}"
+
+        # Optional: irgendwo ausgeben/weiterverwenden, z.B. in ein Output-Textfeld:
+        # self.output_text.delete("1.0", "end")
+        # self.output_text.insert("1.0", combined_svg)
+
+        # --- Speichern-Dialog (jetzt immer verfügbar, weil html_str existiert) ---
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".svg",
+            filetypes=[("SVG-Dateien", "*.svg"), ("Alle Dateien", "*.*")],
+            title="SVG speichern unter"
+        )
+
+        if not file_path:
+            return  # Benutzer hat abgebrochen
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(combined_svg)
+            messagebox.showinfo("Erfolg", f"SVG-Datei gespeichert:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Beim Speichern ist ein Fehler aufgetreten:\n{e}")    
+   
+        
     def generate_html_from_svg_css(self):
         css_content = self.css_input.get("1.0", "end").strip()
         svg_content = self.svg_input.get("1.0", "end").strip()
-        
-        
-         # 🧠 Eingabe prüfen
+
+        # --- Eingaben vorbereiten ---
         if not css_content and not svg_content:
-            # Falls beides leer ist, verwende geladene SVG-Datei (falls vorhanden)
             if self.loaded_svg_from_file:
                 svg_raw = self.loaded_svg_from_file
 
-                # Extrahiere CSS <style> aus SVG
+                # CSS aus <style> im SVG extrahieren (falls vorhanden)
                 css_match = re.search(r"<style[^>]*>(.*?)</style>", svg_raw, re.DOTALL | re.IGNORECASE)
                 css_content = css_match.group(1).strip() if css_match else ""
 
-                # Entferne style aus SVG
+                # <style> aus dem SVG entfernen
                 svg_content = re.sub(r"<style[^>]*>.*?</style>", "", svg_raw, flags=re.DOTALL | re.IGNORECASE).strip()
             else:
-                messagebox.showwarning("Eingabe fehlt", "Bitte geben Sie CSS und SVG ein oder wählen Sie eine SVG-Datei.")
+                messagebox.showwarning("Eingabe fehlt", "Bitte geben Sie CSS und/oder SVG ein oder wählen Sie eine SVG-Datei.")
                 return
+        # else: css_content und/oder svg_content sind bereits aus den Textfeldern gesetzt
 
-         
-            # Nur Füllungen bei animierten Elementen ersetzen – nicht globale Farben!
-            # Nur bei Klassen wie svg-elem-* ohne vorhandenes fill einfügen
-            svg_content = re.sub(
-                r'(<(path|circle|rect|polygon|line|ellipse)[^>]*class="svg-elem-\d+"(?![^>]*fill=))',
-                r'\1 fill="transparent"',
-                svg_content
-            )
+        # --- SVG anpassen ---
 
-            # ✅ class="active" in das <svg>-Tag einfügen, wenn noch nicht vorhanden
-            svg_content = re.sub(
-                r'(<svg\b[^>]*?)>',
-                lambda m: (m.group(1) + ' class="active">') if 'class=' not in m.group(1) else m.group(0),
-                svg_content,
-                count=1
-            )
+        # 1) fill="transparent" nur dort ergänzen, wo:
+        #    - Element in {path,circle,rect,polygon,line,ellipse}
+        #    - class enthält svg-elem-<zahl>
+        #    - KEIN fill-Attribut vorhanden
+        #    - KEIN style="... fill: ..." vorhanden
+        tag_re = re.compile(r'<(?:path|circle|rect|polygon|line|ellipse)\b[^>]*?>', re.IGNORECASE | re.DOTALL)
+
+        def insert_fill_if_needed(m):
+            tag = m.group(0)
+
+            # Klasse prüfen (irgendwo im Tag)
+            if not re.search(r'class\s*=\s*(["\']).*?\bsvg-elem-\d+\b.*?\1', tag, re.IGNORECASE | re.DOTALL):
+                return tag
+
+            # Bereits fill-Attribut?
+            if re.search(r'\bfill\s*=', tag, re.IGNORECASE):
+                return tag
+
+            # fill in style?
+            style_m = re.search(r'style\s*=\s*(["\'])(.*?)\1', tag, re.IGNORECASE | re.DOTALL)
+            if style_m and re.search(r'\bfill\s*:', style_m.group(2), re.IGNORECASE):
+                return tag
+
+            # Sicher direkt vor dem Tagabschluss (">" oder "/>") einfügen
+            return re.sub(r'\s*/?>\s*$', ' fill="transparent">', tag)
+
+        svg_content = tag_re.sub(insert_fill_if_needed, svg_content)
+
+        # 2) class="active" ins <svg>-Root einfügen, falls nicht vorhanden
+        svg_root_re = re.compile(r'(<svg\b)([^>]*)(>)', re.IGNORECASE | re.DOTALL)
+
+        def ensure_svg_active(m):
+            open_tag, attrs, close = m.group(1), m.group(2), m.group(3)
+            if re.search(r'\bclass\s*=', attrs, re.IGNORECASE):
+                return m.group(0)  # Klasse existiert schon
+            return f'{open_tag}{attrs} class="active"{close}'
+
+        svg_content = svg_root_re.sub(ensure_svg_active, svg_content, count=1)
+            # --- HTML bauen (immer!) ---
+        html_str = f"""<!DOCTYPE html>
+        <html lang="de">
+        <head>
+        <meta charset="UTF-8">
+        <title>SVG Animation</title>
+        <style>
+        html::-webkit-scrollbar {{ display: none; }}
+        html {{ -ms-overflow-style: none; scrollbar-width: none; background-color: transparent; }}
+        {css_content}
+        </style>
+
+        <script>
+        let animationDuration = 0;
+        let animatableElements = [];
+
+        document.addEventListener("DOMContentLoaded", function () {{
+        const svg = document.querySelector("svg");
+        if (!svg) return;
+
+        const elements = svg.querySelectorAll("[class^='svg-elem']");
+        let maxEndTime = 0;
+
+        animatableElements = Array.from(elements).map(el => {{
+            const style = getComputedStyle(el);
+            const durationStr = (style.transitionDuration.split(",")[0] || "0s");
+            const delayStr = (style.transitionDelay.split(",")[0] || "0s");
+
+            const duration = parseFloat(durationStr) || 0;
+            const delay = parseFloat(delayStr) || 0;
+            const totalLength = el.getTotalLength?.() || 0;
+
+            const endTime = delay + duration;
+            if (endTime > maxEndTime) maxEndTime = endTime;
+
+            el.style.strokeDasharray = totalLength;
+            el.style.strokeDashoffset = totalLength;
+            el.style.transition = "none";
+
+            return {{ el, length: totalLength, duration, delay }};
+        }});
+
+        animationDuration = maxEndTime;
+
+        const input = document.getElementById("animationLength");
+        if (input) input.value = animationDuration;
+        }});
+
+        function startAnimation() {{
+        const svg = document.querySelector("svg");
+        if (svg) svg.classList.add("active");
+        }}
+
+        function renderFrameAt(t) {{
+        animatableElements.forEach(({{
+            el, length, duration, delay
+        }}) => {{
+            let progress;
+            if (t < delay) {{
+            progress = 0;
+            }} else if (t >= delay + duration) {{
+            progress = 1;
+            }} else {{
+            progress = (t - delay) / duration;
+            }}
+            const offset = length * (1 - progress);
+            el.style.strokeDashoffset = `${{offset}}`;
+        }});
+        }}
+        </script>
+        </head>
+        <body>
+        <input type="hidden" id="animationLength">
+        <div id="container">
+        {svg_content}
+        </div>
+        </body>
+        </html>
+        """
+
+        # --- Speichern-Dialog (jetzt immer verfügbar, weil html_str existiert) ---
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".html",
+            filetypes=[("HTML-Dateien", "*.html"), ("Alle Dateien", "*.*")],
+            title="HTML speichern unter"
+        )
+
+        if not file_path:
+            return  # Benutzer hat abgebrochen
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(html_str)
+            messagebox.showinfo("Erfolg", f"HTML-Datei gespeichert:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Beim Speichern ist ein Fehler aufgetreten:\n{e}")     
             
-            html_str = f"""<!DOCTYPE html>
-            <html lang="de">
-            <head>
-            <meta charset="UTF-8">
-            <title>SVG Animation</title>
-            <style>
-            html::-webkit-scrollbar {{ display: none; }}
-            html {{ -ms-overflow-style: none; scrollbar-width: none; background-color: transparent; }}
-            {css_content}
-            </style>
-
-            <script>
-            let animationDuration = 0;
-            let animatableElements = [];
-
-            document.addEventListener("DOMContentLoaded", function () {{
-            const svg = document.querySelector("svg");
-            if (!svg) return;
-
-            const elements = svg.querySelectorAll("[class^='svg-elem']");
-            let maxEndTime = 0;
-
-            animatableElements = Array.from(elements).map(el => {{
-                const style = getComputedStyle(el);
-                const durationStr = style.transitionDuration.split(",")[0] || "0s";
-                const delayStr = style.transitionDelay.split(",")[0] || "0s";
-
-                const duration = parseFloat(durationStr) || 0;
-                const delay = parseFloat(delayStr) || 0;
-                const totalLength = el.getTotalLength?.() || 0;
-
-                const endTime = delay + duration;
-                if (endTime > maxEndTime) maxEndTime = endTime;
-
-                el.style.strokeDasharray = totalLength;
-                el.style.strokeDashoffset = totalLength;
-                el.style.transition = "none";
-
-                return {{
-                el,
-                length: totalLength,
-                duration,
-                delay
-                }};
-            }});
-
-            animationDuration = maxEndTime;
-
-            const input = document.getElementById("animationLength");
-            if (input) input.value = animationDuration;
-            }});
-
-            function startAnimation() {{
-            const svg = document.querySelector("svg");
-            if (svg) {{
-                svg.classList.add("active");
-            }}
-            }}
-
-            function renderFrameAt(t) {{
-            animatableElements.forEach(({{
-                el, length, duration, delay
-            }}) => {{
-                let progress;
-
-                if (t < delay) {{
-                progress = 0;
-                }} else if (t >= delay + duration) {{
-                progress = 1;
-                }} else {{
-                progress = (t - delay) / duration;
-                }}
-
-                const offset = length * (1 - progress);
-                el.style.strokeDashoffset = `${{offset}}`;
-            }});
-            }}
-            </script>
-            </head>
-            <body>
-            <input type="hidden" id="animationLength">
-            <div id="container">
-            {svg_content}
-            </div>
-            </body>
-            </html>
-            """
-
-            # Datei speichern über "Speichern unter"-Dialog
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".html",
-                filetypes=[("HTML-Dateien", "*.html"), ("Alle Dateien", "*.*")],
-                title="HTML speichern unter"
-            )
-
-            if file_path:
-                try:
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        f.write(html_str)
-                    messagebox.showinfo(
-                        "Erfolg", f"HTML-Datei gespeichert:\n{file_path}")
-                except Exception as e:
-                    messagebox.showerror(
-                        "Fehler", f"Beim Speichern ist ein Fehler aufgetreten:\n{e}")
-            else:
-                # Benutzer hat abgebrochen
-                pass
 
     def on_format_change(self, event=None):
         selected = self.format_choice.get()
